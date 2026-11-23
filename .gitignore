@@ -1,0 +1,11 @@
+.gradle/
+build/
+local.properties
+*.p12
+*.jks
+*.keystore
+.idea/
+*.iml
+
+# Firebase config for your own project. The build workflow writes it from a secret.
+app/google-services.json

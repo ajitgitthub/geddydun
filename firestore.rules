@@ -1,0 +1,151 @@
+rules_version = '2';
+
+// Geddydun: only shared shopping lists live here. Paste into
+// Firebase console → Firestore Database → Rules, then Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+
+    // Profile: anyone signed in can read a name; only you can write yours.
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && me() == uid;
+
+      // Connections. Written on both sides when two people connect.
+      match /people/{pid} {
+        allow read: if signedIn() && me() == uid;
+        allow write: if signedIn() && (me() == uid || me() == pid);
+      }
+    }
+
+    // Short codes used to connect. Look-up only by exact code.
+    match /codes/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update: if signedIn() && request.resource.data.uid == me();
+      allow delete: if signedIn() && resource.data.uid == me();
+    }
+
+    match /lists/{listId} {
+      function data() { return resource.data; }
+      function isOwner() { return data().ownerUid == me(); }
+      function isMember() { return me() in data().members; }
+      function invitePath() { return /databases/$(database)/documents/invites/$(listId + '_' + me()); }
+      function invited() {
+        return exists(invitePath()) && get(invitePath()).data.status in ['pending', 'accepted'];
+      }
+      function onlyMembership() {
+        return request.resource.data.diff(data()).affectedKeys().hasOnly(['members', 'memberNames', 'updatedAt']);
+      }
+
+      allow read: if signedIn() && (isMember() || invited());
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == me()
+        && request.resource.data.members == [me()];
+      allow delete: if signedIn() && isOwner();
+      allow update: if signedIn() && (
+        // owner can change anything except ownership
+        (isOwner() && request.resource.data.ownerUid == me())
+        // invited person joins (adds only themselves)
+        || (invited() && onlyMembership()
+            && request.resource.data.members.toSet() == data().members.toSet().union([me()].toSet()))
+        // a member renames themselves or leaves (removes only themselves)
+        || (isMember() && onlyMembership()
+            && (request.resource.data.members.toSet() == data().members.toSet()
+                || request.resource.data.members.toSet() == data().members.toSet().difference([me()].toSet())))
+      );
+
+      function memberOfList() {
+        return me() in get(/databases/$(database)/documents/lists/$(listId)).data.members;
+      }
+
+      function memberAfter() {
+        return me() in getAfter(/databases/$(database)/documents/lists/$(listId)).data.members;
+      }
+
+      match /items/{itemId} {
+        allow read: if signedIn() && memberOfList();
+        allow write: if signedIn() && (memberOfList() || memberAfter());
+      }
+
+      match /log/{logId} {
+        allow read: if signedIn() && memberOfList();
+        allow create: if signedIn() && (memberOfList() || memberAfter());
+        allow update, delete: if false;
+      }
+    }
+
+    // Invites: id is {listId}_{toUid}. Only the list owner can send.
+    match /invites/{inviteId} {
+      allow read: if signedIn() && (resource.data.toUid == me() || resource.data.fromUid == me());
+      allow create, update: if signedIn() && (
+        (request.resource.data.fromUid == me()
+          && inviteId == request.resource.data.listId + '_' + request.resource.data.toUid
+          && get(/databases/$(database)/documents/lists/$(request.resource.data.listId)).data.ownerUid == me())
+        || (resource != null && resource.data.toUid == me()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']))
+      );
+      allow delete: if signedIn() && (resource.data.toUid == me() || resource.data.fromUid == me());
+    }
+  
+    // Errands one person asks another to do. Only the two of them can see it.
+    match /tasks/{taskId} {
+      function t() { return resource.data; }
+      function connectedTo(other) {
+        return exists(/databases/$(database)/documents/users/$(me())/people/$(other));
+      }
+      allow read: if signedIn() && (t().fromUid == me() || t().toUid == me());
+      allow create: if signedIn()
+        && request.resource.data.fromUid == me()
+        && request.resource.data.status == 'pending'
+        && connectedTo(request.resource.data.toUid);
+      // Either of the two can change it (the app sends shared changes for an OK first),
+      // but never who it's between.
+      allow update: if signedIn()
+        && (t().fromUid == me() || t().toUid == me())
+        && request.resource.data.fromUid == t().fromUid
+        && request.resource.data.toUid == t().toUid;
+      allow delete: if signedIn() && t().fromUid == me();
+
+      function inTask() {
+        let d = get(/databases/$(database)/documents/tasks/$(taskId)).data;
+        return d.fromUid == me() || d.toUid == me();
+      }
+      match /log/{logId} {
+        allow read, create: if signedIn() && inTask();
+        allow update, delete: if false;
+      }
+    }
+
+    // Backups: one per person under a shared recovery code. You need the code to find them.
+    match /backups/{code}/people/{slot} {
+      allow read, write: if signedIn();
+    }
+
+    // Shared notes: everyone listed in members can read and edit them, no OK needed.
+    match /notes/{id} {
+      allow read: if signedIn() && me() in resource.data.members;
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == me()
+        && me() in request.resource.data.members;
+      allow update: if signedIn() && me() in resource.data.members
+        && request.resource.data.members == resource.data.members
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if signedIn() && me() in resource.data.members;
+    }
+
+    // App feedback we both log. seen = the people who can read it (the writer and their connections).
+    match /feedback/{id} {
+      allow read: if signedIn() && me() in resource.data.seen;
+      allow create: if signedIn()
+        && request.resource.data.fromUid == me()
+        && me() in request.resource.data.seen;
+      // Either of us can mark it fixed or open again; nothing else changes.
+      allow update: if signedIn() && me() in resource.data.seen
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fixed']);
+      allow delete: if signedIn() && resource.data.fromUid == me();
+    }
+  }
+}

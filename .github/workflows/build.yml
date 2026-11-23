@@ -1,0 +1,59 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['README.md', 'LICENSE']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One build at a time, so version numbers can't collide.
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      # Builds 1-39 ran in an older repo, so this one carries on from there.
+      - name: Pick the version number
+        run: echo "APP_VERSION=$((GITHUB_RUN_NUMBER + 39))" >> "$GITHUB_ENV"
+
+      - name: Add the Firebase config and signing key
+        env:
+          GOOGLE_SERVICES_B64: ${{ secrets.GOOGLE_SERVICES_B64 }}
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          echo "$GOOGLE_SERVICES_B64" | base64 -d > app/google-services.json
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.p12"
+
+      - name: Build
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/release.p12
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - run: cp app/build/outputs/apk/release/app-release.apk Geddydun.apk
+
+      # The app checks this repo's latest release for updates.
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ env.APP_VERSION }}
+          name: Geddydun 1.0.${{ env.APP_VERSION }}
+          files: Geddydun.apk
+          body_path: whatsnew.txt
+          make_latest: true
