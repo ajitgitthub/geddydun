@@ -91,6 +91,16 @@ object Backup {
         Store.onPrefsChanged(prefsListener)
     }
 
+    /** The old shared code every install used to start with. The rules now refuse it. */
+    const val LEGACY_CODE = "16092026"
+
+    /** 12 random characters, no look-alikes (0/O, 1/I/L). */
+    fun newCode(): String {
+        val abc = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+        val r = java.security.SecureRandom()
+        return (1..12).map { abc[r.nextInt(abc.length)] }.joinToString("")
+    }
+
     private fun slot(code: String = Store.recoveryCode, uid: String = Cloud.uid) =
         db.collection("backups").document(code).collection("people").document(uid)
 
@@ -104,6 +114,10 @@ object Backup {
         h.removeCallbacks(run)
         val me = Cloud.uid
         if (restoring || me.isBlank() || Store.userName.isBlank()) return
+        // Take this phone's backup out of the old shared code, once.
+        if (!local.getBoolean("legacyGone", false)) {
+            slot(LEGACY_CODE, me).delete().addOnSuccessListener { local.edit().putBoolean("legacyGone", true).apply() }
+        }
         val reminders = Store.remindersJson()
         var prefs = Store.prefsJson()
         // Firestore documents top out at 1 MB; drop the history log first if it gets that big.
@@ -205,7 +219,7 @@ fun agoText(ts: Long): String {
     }
 }
 
-/** "16092026" → "1609 2026". */
+/** "K7QM4XHP92TA" → "K7QM 4XHP 92TA". */
 private fun spaced(code: String) = code.chunked(4).joinToString(" ")
 
 /** Settings → Backup. */
@@ -279,7 +293,7 @@ fun RestoreScreen(onClose: () -> Unit, onRestored: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     fun find() {
-        val c = code.filter { it.isLetterOrDigit() }
+        val c = code.filter { it.isLetterOrDigit() }.uppercase()
         if (c.length < 4) {
             error = "Type your recovery code"; return
         }
@@ -304,7 +318,7 @@ fun RestoreScreen(onClose: () -> Unit, onRestored: () -> Unit) {
         OutlinedTextField(
             value = code,
             onValueChange = { code = it.filter { c -> c.isLetterOrDigit() || c == ' ' }.take(24); slots = null; error = null },
-            placeholder = { Text("1234 5678") }, singleLine = true,
+            placeholder = { Text("XXXX XXXX XXXX") }, singleLine = true,
             textStyle = androidx.compose.ui.text.TextStyle(fontFamily = Mono, fontSize = 20.sp, letterSpacing = 3.sp),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
             shape = FieldShape, colors = fieldColors(), modifier = Modifier.fillMaxWidth(),
@@ -339,7 +353,7 @@ fun RestoreScreen(onClose: () -> Unit, onRestored: () -> Unit) {
                     busy = true
                     scope.launch {
                         delay(80) // let the spinner show before the work starts
-                        val err = Backup.restore(ctx, code.filter { it.isLetterOrDigit() }, p)
+                        val err = Backup.restore(ctx, code.filter { it.isLetterOrDigit() }.uppercase(), p)
                         busy = false
                         if (err != null) {
                             error = err

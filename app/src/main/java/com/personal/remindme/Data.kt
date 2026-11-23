@@ -321,9 +321,13 @@ object Store {
 
     // ---------- backup ----------
 
-    /** Shared code for both phones' backups; change it in Settings. */
+    /** This person's own backup code: long and random, so only someone who has it can find the backup. */
     var recoveryCode: String
-        get() = prefs.getString("recoveryCode", "16092026") ?: "16092026"
+        get() {
+            val c = prefs.getString("recoveryCode", null)
+            if (c != null && c != Backup.LEGACY_CODE) return c
+            return Backup.newCode().also { recoveryCode = it }
+        }
         set(v) = prefs.edit().putString("recoveryCode", v).apply()
 
     /** Settings that belong to this phone only, never backed up or restored. */

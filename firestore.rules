@@ -8,9 +8,10 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function me() { return request.auth.uid; }
 
-    // Profile: anyone signed in can read a name; only you can write yours.
+    // Profile: anyone signed in can look up one person by id, but can't list everyone.
     match /users/{uid} {
-      allow read: if signedIn();
+      allow get: if signedIn();
+      allow list: if false;
       allow write: if signedIn() && me() == uid;
 
       // Connections. Written on both sides when two people connect.
@@ -119,9 +120,15 @@ service cloud.firestore {
       }
     }
 
-    // Backups: one per person under a shared recovery code. You need the code to find them.
+    // Backups: one per person under their own 12-character recovery code.
+    // You need the code to find a backup, and you can only write your own.
+    // Short codes (like the old shared one) are refused.
     match /backups/{code}/people/{slot} {
-      allow read, write: if signedIn();
+      function longCode() { return code.size() >= 12; }
+      allow read: if signedIn() && longCode();
+      allow create, update: if signedIn() && longCode() && slot == me();
+      // Your own slot anywhere (moving off the old code), or an old phone's slot when you restore it.
+      allow delete: if signedIn() && (slot == me() || longCode());
     }
 
     // Shared notes: everyone listed in members can read and edit them, no OK needed.
