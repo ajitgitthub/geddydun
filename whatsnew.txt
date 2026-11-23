@@ -1,3 +1,2 @@
-- Sparkle fixed for test alarms: tapping I'll do it now on a test alarm skipped the sound
-- If notification volume is off or Do Not Disturb is on, Sparkle plays on media volume instead
-- Settings: tap Celebration sound to hear it. It tells you how it played, or why it didn't
+- Geddydun is now open source: anyone can read the code at github.com/ajitgitthub/geddydun
+- Nothing else changes; your reminders, lists and settings stay as they are
