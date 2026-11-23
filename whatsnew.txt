@@ -1,3 +1,3 @@
 - Your backup now has its own private recovery code, so no one else can find it
 - Open Settings → Backup → Copy code and save it somewhere safe: you'll need it on a new phone
-- Each person on a phone now has their own code
+- Each person gets their own code; the old shared one no longer works
